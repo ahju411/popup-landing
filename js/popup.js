@@ -1,38 +1,50 @@
 (function() {
   'use strict';
 
-  const STORAGE_KEY = 'popup_dismissed_';
+  var STORAGE_KEY = 'popup_dismissed_';
+  var popupQueue = [];
+  var currentPopupIndex = 0;
 
   function isDismissedToday(popupId) {
-    const dismissed = localStorage.getItem(STORAGE_KEY + popupId);
+    var dismissed = localStorage.getItem(STORAGE_KEY + popupId);
     if (!dismissed) return false;
-
-    const today = new Date().toDateString();
+    var today = new Date().toDateString();
     return dismissed === today;
   }
 
   function dismissPopup(popupId) {
-    const checkbox = document.getElementById('popup-dismiss-check');
+    var checkbox = document.getElementById('popup-dismiss-check');
     if (checkbox && checkbox.checked) {
-      const today = new Date().toDateString();
+      var today = new Date().toDateString();
       localStorage.setItem(STORAGE_KEY + popupId, today);
     }
   }
 
-  function showPopup(popup) {
-    const overlay = document.getElementById('popup-overlay');
-    const titleEl = document.getElementById('popup-title');
-    const contentEl = document.getElementById('popup-content');
-    const imageEl = document.getElementById('popup-image');
-    const linkEl = document.getElementById('popup-link');
-    const closeBtn = overlay.querySelector('.popup-close');
-    const dismissCheck = document.getElementById('popup-dismiss-check');
+  function closePopup() {
+    var overlay = document.getElementById('popup-overlay');
+    if (currentPopupIndex < popupQueue.length) {
+      dismissPopup(popupQueue[currentPopupIndex].id);
+    }
+    overlay.style.display = 'none';
+    document.body.style.overflow = '';
 
-    // 제목과 내용 설정 (XSS 방지: textContent 사용)
+    currentPopupIndex++;
+    if (currentPopupIndex < popupQueue.length) {
+      setTimeout(function() { showPopup(popupQueue[currentPopupIndex]); }, 300);
+    }
+  }
+
+  function showPopup(popup) {
+    var overlay = document.getElementById('popup-overlay');
+    var titleEl = document.getElementById('popup-title');
+    var contentEl = document.getElementById('popup-content');
+    var imageEl = document.getElementById('popup-image');
+    var linkEl = document.getElementById('popup-link');
+    var dismissCheck = document.getElementById('popup-dismiss-check');
+
     titleEl.textContent = popup.title;
     contentEl.textContent = popup.content;
 
-    // 이미지 설정
     if (popup.imageUrl) {
       var img = document.createElement('img');
       img.src = popup.imageUrl;
@@ -45,7 +57,6 @@
       imageEl.style.display = 'none';
     }
 
-    // 링크 설정
     if (popup.linkUrl) {
       linkEl.href = popup.linkUrl;
       linkEl.textContent = popup.linkText || '자세히 보기';
@@ -56,28 +67,22 @@
       linkEl.style.display = 'none';
     }
 
-    // 체크박스 초기화
     dismissCheck.checked = false;
-
-    // 팝업 표시
     overlay.style.display = 'flex';
     document.body.style.overflow = 'hidden';
+  }
 
-    // 닫기 이벤트
-    function closePopup() {
-      dismissPopup(popup.id);
-      overlay.style.display = 'none';
-      document.body.style.overflow = '';
-    }
+  function initPopupEvents() {
+    var overlay = document.getElementById('popup-overlay');
+    var closeBtn = overlay.querySelector('.popup-close');
 
     closeBtn.addEventListener('click', closePopup);
     overlay.addEventListener('click', function(e) {
       if (e.target === overlay) closePopup();
     });
-    document.addEventListener('keydown', function handler(e) {
-      if (e.key === 'Escape') {
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && overlay.style.display === 'flex') {
         closePopup();
-        document.removeEventListener('keydown', handler);
       }
     });
   }
@@ -90,22 +95,20 @@
       var data = await response.json();
       if (!data.popups || data.popups.length === 0) return;
 
-      // 이미 dismiss된 팝업 제외, 첫 번째 팝업 표시
-      var popup = data.popups.find(function(p) {
+      popupQueue = data.popups.filter(function(p) {
         return !isDismissedToday(p.id);
       });
 
-      if (popup) {
-        // 약간의 딜레이 후 표시 (UX)
-        setTimeout(function() { showPopup(popup); }, 800);
+      if (popupQueue.length > 0) {
+        currentPopupIndex = 0;
+        initPopupEvents();
+        setTimeout(function() { showPopup(popupQueue[0]); }, 800);
       }
     } catch (err) {
-      // API 실패 시 조용히 무시 (랜딩페이지는 정상 작동)
       console.warn('Popup fetch failed:', err.message);
     }
   }
 
-  // DOM 로드 후 팝업 fetch
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', fetchPopups);
   } else {
