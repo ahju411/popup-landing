@@ -18,8 +18,6 @@ module.exports = async function handler(req, res) {
       return res.status(500).json({ error: 'Database ID not configured' });
     }
 
-    const now = new Date().toISOString();
-
     // Notion DB 쿼리: IsActive가 true인 항목
     const response = await notion.databases.query({
       database_id: databaseId,
@@ -59,11 +57,26 @@ module.exports = async function handler(req, res) {
       })
       .map(page => {
         const props = page.properties;
+
+        // 이미지 URL 결정: Image(files) 우선, ImageURL(url) fallback
+        let imageUrl = null;
+        if (props.Image && props.Image.files && props.Image.files.length > 0) {
+          const file = props.Image.files[0];
+          if (file.type === 'file') {
+            // Notion 업로드 이미지 → 프록시 경로 사용
+            imageUrl = '/api/image-proxy?url=' + encodeURIComponent(file.file.url);
+          } else if (file.type === 'external') {
+            imageUrl = file.external.url;
+          }
+        } else if (props.ImageURL && props.ImageURL.url) {
+          imageUrl = props.ImageURL.url;
+        }
+
         return {
           id: page.id,
           title: props.Title?.title?.[0]?.plain_text || '',
           content: props.Content?.rich_text?.[0]?.plain_text || '',
-          imageUrl: props.ImageURL?.url || null,
+          imageUrl: imageUrl,
           linkUrl: props.LinkURL?.url || null,
           linkText: props.LinkText?.rich_text?.[0]?.plain_text || '자세히 보기',
           priority: props.Priority?.number || 0
