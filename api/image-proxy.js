@@ -1,35 +1,51 @@
-module.exports = async function handler(req, res) {
-  const imageUrl = req.query.url;
+const { Client } = require('@notionhq/client');
 
-  if (!imageUrl) {
-    return res.status(400).json({ error: 'Missing url parameter' });
+const notion = new Client({ auth: process.env.NOTION_API_KEY });
+
+module.exports = async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  var pageId = req.query.pageId;
+  if (!pageId) {
+    return res.status(400).json({ error: 'Missing pageId parameter' });
   }
 
   try {
-    const decoded = decodeURIComponent(imageUrl);
+    // Notion에서 페이지 정보 가져오기 (항상 신선한 URL)
+    var page = await notion.pages.retrieve({ page_id: pageId });
+    var props = page.properties;
 
-    // Notion S3 URL만 허용 (보안)
-    const allowed = [
-      'https://prod-files-secure.s3.us-west-2.amazonaws.com',
-      'https://s3.us-west-2.amazonaws.com'
-    ];
-    const isAllowed = allowed.some(prefix => decoded.startsWith(prefix));
-
-    if (!isAllowed) {
-      return res.status(403).json({ error: 'URL not allowed' });
+    // Image (files) 속성에서 URL 추출
+    var imageUrl = null;
+    if (props.Image && props.Image.files && props.Image.files.length > 0) {
+      var file = props.Image.files[0];
+      if (file.type === 'file') {
+        imageUrl = file.file.url;
+      } else if (file.type === 'external') {
+        imageUrl = file.external.url;
+      }
     }
 
-    const response = await fetch(decoded);
+    // Image 없으면 ImageURL fallback
+    if (!imageUrl && props.ImageURL && props.ImageURL.url) {
+      imageUrl = props.ImageURL.url;
+    }
+
+    if (!imageUrl) {
+      return res.status(404).json({ error: 'No image found' });
+    }
+
+    // 이미지 fetch 및 프록시
+    var response = await fetch(imageUrl);
     if (!response.ok) {
-      return res.status(response.status).json({ error: 'Failed to fetch image' });
+      return res.status(502).json({ error: 'Failed to fetch image' });
     }
 
-    const contentType = response.headers.get('content-type') || 'image/png';
-    const buffer = Buffer.from(await response.arrayBuffer());
+    var contentType = response.headers.get('content-type') || 'image/png';
+    var buffer = Buffer.from(await response.arrayBuffer());
 
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
     return res.status(200).send(buffer);
   } catch (error) {
     console.error('Image proxy error:', error.message);
